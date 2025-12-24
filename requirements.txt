@@ -1,0 +1,7 @@
+langchain
+pydantic
+python-dotenv
+langchain-community
+langchain-huggingface
+sentence-transformers
+faiss-cpu
