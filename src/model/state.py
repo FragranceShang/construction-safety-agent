@@ -14,5 +14,5 @@ class RegulationState(TypedDict):
     # 最终结果
     answer: Optional[str]
 
-    # 控制信息（课程加分点）
+    # 控制信息
     need_answer: bool

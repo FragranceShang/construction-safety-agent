@@ -1,7 +1,7 @@
 from langchain_community.vectorstores import FAISS
 from langchain_core.retrievers import BaseRetriever
-from builder import get_embedding
-from model.state import RegulationState
+from ...builder import get_embedding
+from ...model.state import RegulationState
 
 def retrieve_node(state: RegulationState) -> RegulationState:
     """
