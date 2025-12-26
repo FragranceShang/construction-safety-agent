@@ -1,6 +1,6 @@
 from langchain_core.documents import Document
 from typing import List
-from .model.regulation import Regulation
+from model.regulation import Regulation
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 

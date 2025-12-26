@@ -1,7 +1,7 @@
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
-from ...model.state import RegulationState
+from model.state import RegulationState
 from ..prompt.prompt import REGULATION_QA_PROMPT
 
 

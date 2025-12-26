@@ -1,7 +1,8 @@
 from langchain_community.vectorstores import FAISS
 from langchain_core.retrievers import BaseRetriever
-from ...builder import get_embedding
-from ...model.state import RegulationState
+from builder import get_embedding
+from memory.mem0 import init_mem0
+from model.state import RegulationState
 
 def retrieve_node(state: RegulationState) -> RegulationState:
     """
@@ -13,11 +14,12 @@ def retrieve_node(state: RegulationState) -> RegulationState:
         RegulationState:
             更新后的状态，包含检索到的文档和是否需要回答的标志。
     """
-    retriever = build_retriever(load_vectorstore("faiss_index"), top_k=9)
+    retriever = build_retriever(load_vectorstore("db/faiss_index"), top_k=6)
     question = state["question"]
 
     docs = retriever.invoke(question)
 
+    state["memory"] = init_mem0()
     state["retrieved_docs"] = docs
     state["need_answer"] = len(docs) > 0
     return state

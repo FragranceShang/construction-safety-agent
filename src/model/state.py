@@ -8,7 +8,9 @@ class RegulationState(TypedDict):
     question: str
 
     # RAG 中间态
+    memory: any
     retrieved_docs: List[Document]
+    memory_docs: List[Document]
     context: str
 
     # 最终结果
