@@ -1,10 +1,10 @@
 from langchain_community.vectorstores import FAISS
 from langchain_core.retrievers import BaseRetriever
 from builder import get_embedding
-from memory.mem0 import init_mem0
 from model.state import RegulationState
+from utils.wandb import log_metrics
 
-def retrieve_node(state: RegulationState) -> RegulationState:
+def retrieve_node(state: RegulationState, memory) -> RegulationState:
     """
     基于 RAG 框架的法规检索节点。
     Args:
@@ -19,9 +19,15 @@ def retrieve_node(state: RegulationState) -> RegulationState:
 
     docs = retriever.invoke(question)
 
-    state["memory"] = init_mem0()
+    state["memory"] = memory
     state["retrieved_docs"] = docs
     state["need_answer"] = len(docs) > 0
+
+    log_metrics({
+        "retrieved_docs": len(docs),
+        "question": question,
+    })
+
     return state
 
 def load_vectorstore(path: str) -> FAISS:

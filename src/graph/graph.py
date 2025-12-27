@@ -10,11 +10,11 @@ from .state.reject import reject_node
 from .state.condition import should_answer
 from .state.store import store_memory_node
 
-def build_regulation_graph():
+def build_regulation_graph(memory):
     graph = StateGraph(RegulationState)
 
     # 注册节点
-    graph.add_node("retrieve", retrieve_node)
+    graph.add_node("retrieve", lambda state: retrieve_node(state, memory))
     graph.add_node("load_memory", load_memory_node)
     graph.add_node("context", context_node)
     graph.add_node("answer", answer_node)

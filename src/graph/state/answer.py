@@ -2,17 +2,25 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 from model.state import RegulationState
+from utils.wandb import log_metrics
 from ..prompt.prompt import REGULATION_QA_PROMPT
 
 
 def answer_node(state: RegulationState) -> RegulationState:
     prompt = REGULATION_QA_PROMPT.format(
+        history=state["history"],
         context=state["context"],
         question=state["question"],
     )
 
     client = get_llm()
     state["answer"] = call_llm(client, prompt)
+
+    log_metrics({
+       "prompt_length": len(prompt),
+        "answer_length": len(state["answer"]),
+    })
+
     return state
 
 def get_llm() -> OpenAI:

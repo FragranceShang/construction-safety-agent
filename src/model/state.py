@@ -10,7 +10,7 @@ class RegulationState(TypedDict):
     # RAG 中间态
     memory: any
     retrieved_docs: List[Document]
-    memory_docs: List[Document]
+    history: str
     context: str
 
     # 最终结果
