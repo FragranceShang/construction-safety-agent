@@ -6,6 +6,9 @@ REGULATION_QA_PROMPT = PromptTemplate(
 你是一名工程安全规范解读助手。
 请**严格依据给定的规范条文内容**回答问题，不得编造规范。
 
+【历史记录】
+{history}
+
 【规范条文】
 {context}
 
