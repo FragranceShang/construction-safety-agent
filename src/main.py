@@ -1,19 +1,14 @@
 import os
 from graph.graph import build_regulation_graph
-from mem0 import MemoryClient
 from dotenv import load_dotenv
 
+from memory.manager import Memory
+from utils import const
 from utils.wandb import finish_wandb, init_wandb
 
-def init_mem0():
-    load_dotenv()
-    api_key: str | None = os.getenv("MEM0_API_KEY")
-    if not api_key:
-        raise ValueError("未在环境变量中找到 MEM0_API_KEY")
-    return MemoryClient(api_key=api_key)
-
 def main():
-    client = init_mem0()
+    os.makedirs(os.path.dirname(const.output_path), exist_ok=True)
+    client = Memory(4)
     wandb_run = init_wandb()
 
     regulation_graph = build_regulation_graph(client)

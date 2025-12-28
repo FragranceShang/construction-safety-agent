@@ -16,6 +16,7 @@ venv.bak/
 # Data files
 data/
 faiss_index/
+outputs/
 
 # Environment
 .env
@@ -39,6 +40,7 @@ test_results.txt
 # Logs
 logs/
 *.log
+wandb/
 
 # Build
 build/

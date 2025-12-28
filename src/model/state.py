@@ -1,6 +1,8 @@
 from typing import TypedDict, List, Optional
 from langchain_core.documents import Document
 
+from memory.manager import Memory
+
 class RegulationState(TypedDict):
     """
     Docstring for RegulationState
@@ -8,7 +10,7 @@ class RegulationState(TypedDict):
     question: str
 
     # RAG 中间态
-    memory: any
+    memory: Memory
     retrieved_docs: List[Document]
     history: str
     context: str

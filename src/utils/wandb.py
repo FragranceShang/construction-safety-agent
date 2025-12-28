@@ -10,7 +10,7 @@ def init_wandb(config=None):
     
     run = wandb.init(
         project="agent-memory",
-        name="rag_memory_mem0",
+        name="rag_memory_memory",
         config={
             "memory_type": "vector_rag",
             "top_k": 5,
