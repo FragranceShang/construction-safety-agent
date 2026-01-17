@@ -3,6 +3,7 @@ from ..rag import answer_regulation
 
 if __name__ == "__main__":
     from ..graph.state.retriever import load_vectorstore, build_retriever
+
     vectorstore = load_vectorstore("faiss_index")
     retriever = build_retriever(vectorstore, top_k=9)
     with open("test_results.txt", "w", encoding="utf-8") as f:

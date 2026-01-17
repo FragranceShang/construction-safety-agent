@@ -10,6 +10,7 @@ from .state.reject import reject_node
 from .state.condition import should_answer
 from .state.store import store_memory_node
 
+
 def build_regulation_graph(memory):
     graph = StateGraph(RegulationState)
 
@@ -31,7 +32,7 @@ def build_regulation_graph(memory):
         {
             "approve": "load_memory",
             "reject": "reject",
-        }
+        },
     )
 
     # 主流程

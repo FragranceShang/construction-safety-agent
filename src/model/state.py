@@ -3,10 +3,12 @@ from langchain_core.documents import Document
 
 from memory.manager import Memory
 
+
 class RegulationState(TypedDict):
     """
     Docstring for RegulationState
     """
+
     question: str
 
     # RAG 中间态

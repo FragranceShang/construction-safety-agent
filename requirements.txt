@@ -1,7 +1,8 @@
-langchain
-pydantic
+langgraph
+openai
 python-dotenv
 langchain-community
 langchain-huggingface
+wandb
 sentence-transformers
 faiss-cpu

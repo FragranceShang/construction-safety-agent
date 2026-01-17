@@ -2,9 +2,11 @@ from typing import List
 from langchain_core.documents import Document
 from model.state import RegulationState
 
+
 def context_node(state: RegulationState) -> RegulationState:
     state["context"] = build_context(state["retrieved_docs"])
     return state
+
 
 def build_context(docs: List[Document]) -> str:
     """

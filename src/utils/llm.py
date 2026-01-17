@@ -2,6 +2,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 
+
 def get_llm() -> OpenAI:
     """
     获取 OpenAI LLM 实例
@@ -15,10 +16,11 @@ def get_llm() -> OpenAI:
         base_url="https://openrouter.ai/api/v1",
     )
 
+
 def call_llm(
     client: OpenAI,
     prompt: str,
-    model: str = "nex-agi/deepseek-v3.1-nex-n1:free",
+    model: str = "nex-agi/deepseek-v3.1-nex-n1",
     temperature: float = 0.2,
 ) -> str:
     """
@@ -44,6 +46,7 @@ def call_llm(
         messages=[
             {"role": "user", "content": prompt},
         ],
+        max_tokens=1024,
     )
 
     return response.choices[0].message.content.strip()

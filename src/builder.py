@@ -4,6 +4,7 @@ from model.regulation import Regulation
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
+
 def build_faiss_vectorstore(documents: List[Document], save_path: str) -> FAISS:
     """
     构建 FAISS 向量库并保存到本地
@@ -15,13 +16,11 @@ def build_faiss_vectorstore(documents: List[Document], save_path: str) -> FAISS:
     """
     embedding = get_embedding()
 
-    vectorstore = FAISS.from_documents(
-        documents=documents,
-        embedding=embedding
-    )
+    vectorstore = FAISS.from_documents(documents=documents, embedding=embedding)
 
     vectorstore.save_local(save_path)
     return vectorstore
+
 
 def get_embedding() -> HuggingFaceEmbeddings:
     """
@@ -30,19 +29,17 @@ def get_embedding() -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(
         model_name="BAAI/bge-base-zh",
         model_kwargs={"device": "cpu"},
-        encode_kwargs={
-            "normalize_embeddings": True,
-            "batch_size": 32
-        }
+        encode_kwargs={"normalize_embeddings": True, "batch_size": 32},
     )
+
 
 def regulation_to_documents(regulations: List[Regulation]) -> List[Document]:
     """
     将法规条例列表转换为文档列表。
-    
+
     Args:
         regulations (List[Regulation]): 法规条例列表。
-        
+
     Returns:
         List[Document]: 文档列表。
     """
@@ -55,15 +52,16 @@ def regulation_to_documents(regulations: List[Regulation]) -> List[Document]:
             metadata={
                 "regulation_id": reg.regulation_id,
                 "article": reg.article,
-            }
+            },
         )
         documents.append(doc)
     return documents
 
+
 # 测试代码
 if __name__ == "__main__":
     from loader import load_regulation_data
-    
+
     regulations = load_regulation_data(
         "data/《建设工程施工现场供用电安全规范》GB50194-2014.txt"
     )

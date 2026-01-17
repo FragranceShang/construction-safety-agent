@@ -4,6 +4,7 @@ from builder import get_embedding
 from model.state import RegulationState
 from utils.wandb import log_metrics
 
+
 def retrieve_node(state: RegulationState, memory) -> RegulationState:
     """
     基于 RAG 框架的法规检索节点。
@@ -23,12 +24,15 @@ def retrieve_node(state: RegulationState, memory) -> RegulationState:
     state["retrieved_docs"] = docs
     state["need_answer"] = len(docs) > 0
 
-    log_metrics({
-        "retrieved_docs": len(docs),
-        "question": question,
-    })
+    log_metrics(
+        {
+            "retrieved_docs": len(docs),
+            "question": question,
+        }
+    )
 
     return state
+
 
 def load_vectorstore(path: str) -> FAISS:
     """
@@ -41,11 +45,10 @@ def load_vectorstore(path: str) -> FAISS:
     embedding = get_embedding()
 
     vectorstore = FAISS.load_local(
-        folder_path=path,
-        embeddings=embedding,
-        allow_dangerous_deserialization=True
+        folder_path=path, embeddings=embedding, allow_dangerous_deserialization=True
     )
     return vectorstore
+
 
 def build_retriever(
     vectorstore: FAISS,
@@ -67,11 +70,8 @@ def build_retriever(
         BaseRetriever:
             符合 LangChain Retriever 接口规范的检索器实例。
     """
-    return vectorstore.as_retriever(
-        search_kwargs={
-            "k": top_k
-        }
-    )
+    return vectorstore.as_retriever(search_kwargs={"k": top_k})
+
 
 if __name__ == "__main__":
     vectorstore = load_vectorstore("faiss_index")

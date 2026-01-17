@@ -17,12 +17,14 @@ def answer_node(state: RegulationState) -> RegulationState:
 
     with open(const.output_path, "w", encoding="utf-8") as f:
         f.write("=== 问答 ===\n")
-        f.write(prompt+"\n\n")
-        f.write(state["answer"]+"\n")
+        f.write(prompt + "\n\n")
+        f.write(state["answer"] + "\n")
 
-    log_metrics({
-       "prompt_length": len(prompt),
-        "answer_length": len(state["answer"]),
-    })
+    log_metrics(
+        {
+            "prompt_length": len(prompt),
+            "answer_length": len(state["answer"]),
+        }
+    )
 
     return state

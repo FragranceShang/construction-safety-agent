@@ -23,5 +23,5 @@ REGULATION_QA_PROMPT = PromptTemplate(
 5. 不得进行推断、补充或扩展解释
 
 【回答】
-"""
+""",
 )
