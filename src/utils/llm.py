@@ -1,6 +1,11 @@
+import base64
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
+
+TEXR_MODEL = "nex-agi/deepseek-v3.1-nex-n1"
+
+VISION_MODEL = "qwen/qwen3-vl-8b-instruct"
 
 
 def get_llm() -> OpenAI:
@@ -20,7 +25,7 @@ def get_llm() -> OpenAI:
 def call_llm(
     client: OpenAI,
     prompt: str,
-    model: str = "nex-agi/deepseek-v3.1-nex-n1",
+    model: str = TEXR_MODEL,
     temperature: float = 0.2,
 ) -> str:
     """
@@ -50,3 +55,37 @@ def call_llm(
     )
 
     return response.choices[0].message.content.strip()
+
+
+def encode_image(image_path: str) -> str:
+    """把本地图片转为 base64"""
+    with open(image_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+
+def call_vision_llm(client: OpenAI, image_path: str, instruction: str) -> str:
+    """
+    使用 Qwen-VL 解析图片，返回文本
+    """
+
+    base64_image = encode_image(image_path)
+
+    response = client.chat.completions.create(
+        model=VISION_MODEL,
+        temperature=0.0,  # 视觉抽取必须 0，避免幻觉
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": instruction},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{base64_image}"},
+                    },
+                ],
+            }
+        ],
+        max_tokens=1500,
+    )
+
+    return response.choices[0].message.content

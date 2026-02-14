@@ -9,6 +9,8 @@ class RegulationState(TypedDict):
     Docstring for RegulationState
     """
 
+    vision_text: str
+    image_path: str
     question: str
 
     # RAG 中间态

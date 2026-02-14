@@ -1,5 +1,6 @@
 from langgraph.graph import StateGraph, END
 
+from .state.vision_parse import parse_vision
 from model.state import RegulationState
 
 from .state.load import load_memory_node
@@ -15,6 +16,7 @@ def build_regulation_graph(memory):
     graph = StateGraph(RegulationState)
 
     # 注册节点
+    graph.add_node("parse_vision", parse_vision)
     graph.add_node("retrieve", lambda state: retrieve_node(state, memory))
     graph.add_node("load_memory", load_memory_node)
     graph.add_node("context", context_node)
@@ -23,7 +25,8 @@ def build_regulation_graph(memory):
     graph.add_node("store_memory", store_memory_node)
 
     # 入口
-    graph.set_entry_point("retrieve")
+    graph.set_entry_point("parse_vision")
+    graph.add_edge("parse_vision", "retrieve")
 
     # 分支
     graph.add_conditional_edges(

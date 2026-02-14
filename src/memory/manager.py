@@ -1,4 +1,4 @@
-from utils.llm import call_llm, get_llm
+from utils.llm import call_llm, get_llm, TEXR_MODEL
 from memory.prompt import KNOWLEDGE_PROMPT, PROFILE_PROMPT
 
 
@@ -36,7 +36,7 @@ class Memory:
     def update_profile(self, query: str):
         client = get_llm()
         prompt = PROFILE_PROMPT.format(query=query)
-        raw = call_llm(client, prompt)
+        raw = call_llm(client, prompt, model=TEXR_MODEL, temperature=0.2)
 
         print("===update_profile===")
         print(raw)
@@ -53,7 +53,7 @@ class Memory:
         )
         client = get_llm()
         prompt = KNOWLEDGE_PROMPT.format(dialog=dialog_text)
-        raw = call_llm(client, prompt)
+        raw = call_llm(client, prompt, model=TEXR_MODEL, temperature=0.2)
 
         print("===update_knowledge===")
         print(raw)

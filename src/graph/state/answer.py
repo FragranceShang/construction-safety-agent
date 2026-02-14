@@ -1,6 +1,6 @@
 from model.state import RegulationState
 from utils import const
-from utils.llm import call_llm, get_llm
+from utils.llm import call_llm, get_llm, TEXR_MODEL
 from utils.wandb import log_metrics
 from ..prompt.prompt import REGULATION_QA_PROMPT
 
@@ -10,10 +10,11 @@ def answer_node(state: RegulationState) -> RegulationState:
         history=state["history"],
         context=state["context"],
         question=state["question"],
+        vision_text=state["vision_text"],
     )
 
     client = get_llm()
-    state["answer"] = call_llm(client, prompt)
+    state["answer"] = call_llm(client, prompt, model=TEXR_MODEL, temperature=0.2)
 
     with open(const.output_path, "w", encoding="utf-8") as f:
         f.write("=== 问答 ===\n")

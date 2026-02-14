@@ -17,6 +17,7 @@ venv.bak/
 data/
 faiss_index/
 outputs/
+input/
 
 # Environment
 .env

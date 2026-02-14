@@ -17,8 +17,13 @@ def retrieve_node(state: RegulationState, memory) -> RegulationState:
     """
     retriever = build_retriever(load_vectorstore("db/faiss_index"), top_k=6)
     question = state["question"]
-
-    docs = retriever.invoke(question)
+    vision_text = state["vision_text"]
+    query = f"""
+        基于施工现场图片解析的内容：
+        {vision_text}
+        {question}
+        """
+    docs = retriever.invoke(query)
 
     state["memory"] = memory
     state["retrieved_docs"] = docs
