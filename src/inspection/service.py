@@ -3,11 +3,16 @@ from __future__ import annotations
 from collections import Counter
 from typing import Iterable
 
-from .models import ClauseJudgment, InspectionReport, InspectionSummary, SceneParseResult
+from .models import (
+    ClauseJudgment,
+    InspectionReport,
+    InspectionSummary,
+    SceneParseResult,
+)
 
 
 VERDICT_LABEL = {
-    "non_compliant": "疑似违规",
+    "non_compliant": "违规",
     "doubtful": "存疑",
     "compliant": "符合",
     "not_applicable": "不适用",
@@ -24,7 +29,11 @@ VERDICT_ORDER = {
 def sort_judgments(judgments: Iterable[ClauseJudgment]) -> list[ClauseJudgment]:
     return sorted(
         judgments,
-        key=lambda item: (VERDICT_ORDER.get(item.verdict, 9), -item.retrieval_score, item.spec_clause),
+        key=lambda item: (
+            VERDICT_ORDER.get(item.verdict, 9),
+            -item.retrieval_score,
+            item.spec_clause,
+        ),
     )
 
 
@@ -43,7 +52,7 @@ def build_final_conclusion(summary: InspectionSummary) -> str:
     if summary.non_compliant > 0:
         return (
             f"本次共核验 {summary.total_candidates} 条候选条款，发现 "
-            f"{summary.non_compliant} 条疑似违规、{summary.doubtful} 条存疑。"
+            f"{summary.non_compliant} 条违规、{summary.doubtful} 条存疑。"
         )
     if summary.doubtful > 0:
         return (
@@ -86,9 +95,9 @@ def _render_items(title: str, items: list[ClauseJudgment]) -> list[str]:
         )
         lines.append(f"   - 条款：{item.clause_text}")
         if item.evidence_for:
-            lines.append(f"   - 支持证据：{'；'.join(item.evidence_for)}")
+            lines.append(f"   - 合规证据：{'；'.join(item.evidence_for)}")
         if item.evidence_against:
-            lines.append(f"   - 反向证据：{'；'.join(item.evidence_against)}")
+            lines.append(f"   - 违规证据：{'；'.join(item.evidence_against)}")
         if item.missing_evidence:
             lines.append(f"   - 缺失证据：{'；'.join(item.missing_evidence)}")
         if item.reason:
@@ -137,9 +146,11 @@ def build_markdown_report(report: InspectionReport) -> str:
     violations = [item for item in report.judgments if item.verdict == "non_compliant"]
     doubtfuls = [item for item in report.judgments if item.verdict == "doubtful"]
     compliants = [item for item in report.judgments if item.verdict == "compliant"]
-    not_applicable = [item for item in report.judgments if item.verdict == "not_applicable"]
+    not_applicable = [
+        item for item in report.judgments if item.verdict == "not_applicable"
+    ]
 
-    lines.extend(_render_items("疑似违规条款", violations))
+    lines.extend(_render_items("违规条款", violations))
     lines.extend(_render_items("存疑条款", doubtfuls))
     lines.extend(_render_items("符合条款", compliants))
     lines.extend(_render_items("不适用条款", not_applicable))

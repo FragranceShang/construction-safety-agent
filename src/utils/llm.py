@@ -1,10 +1,14 @@
 import base64
+import mimetypes
 import os
+from pathlib import Path
+from typing import Iterable
+
 from dotenv import load_dotenv
-from openai import OpenAI
 
 TEXR_MODEL = "nex-agi/deepseek-v3.1-nex-n1"
 VISION_MODEL = "qwen/qwen3-vl-8b-instruct"
+VISION_JUDGE_MODEL = os.getenv("VISION_JUDGE_MODEL", VISION_MODEL)
 
 
 def get_llm():
@@ -28,11 +32,26 @@ def get_llm():
     )
 
 
+def _normalize_content(content) -> str:
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content") or ""
+                if text:
+                    parts.append(str(text))
+            else:
+                parts.append(str(item))
+        return "".join(parts).strip()
+    return str(content).strip()
+
+
 def call_llm(
     client,
     prompt: str,
     model: str = TEXR_MODEL,
     temperature: float = 0.2,
+    max_tokens: int = 1024,
 ) -> str:
     response = client.chat.completions.create(
         model=model,
@@ -40,12 +59,9 @@ def call_llm(
         messages=[
             {"role": "user", "content": prompt},
         ],
-        max_tokens=1024,
+        max_tokens=max_tokens,
     )
-    content = response.choices[0].message.content
-    if isinstance(content, list):
-        return "".join(str(item) for item in content).strip()
-    return str(content).strip()
+    return _normalize_content(response.choices[0].message.content)
 
 
 def encode_image(image_path: str) -> str:
@@ -53,28 +69,64 @@ def encode_image(image_path: str) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def call_vision_llm(client: OpenAI, image_path: str, instruction: str) -> str:
+def _image_content_item(image_path: str) -> dict:
     base64_image = encode_image(image_path)
+    mime_type, _ = mimetypes.guess_type(image_path)
+    if not mime_type:
+        suffix = Path(image_path).suffix.lower()
+        mime_type = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+        }.get(suffix, "image/png")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+    }
+
+
+def call_multimodal_llm(
+    client,
+    image_paths: Iterable[str],
+    instruction: str,
+    model: str = VISION_JUDGE_MODEL,
+    temperature: float = 0.0,
+    max_tokens: int = 1600,
+) -> str:
+    unique_paths: list[str] = []
+    seen: set[str] = set()
+    for path in image_paths:
+        if not path:
+            continue
+        if path in seen:
+            continue
+        seen.add(path)
+        unique_paths.append(path)
+
+    content = [{"type": "text", "text": instruction}]
+    content.extend(_image_content_item(path) for path in unique_paths)
 
     response = client.chat.completions.create(
-        model=VISION_MODEL,
-        temperature=0.0,
+        model=model,
+        temperature=temperature,
         messages=[
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": instruction},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{base64_image}"},
-                    },
-                ],
+                "content": content,
             }
         ],
+        max_tokens=max_tokens,
+    )
+    return _normalize_content(response.choices[0].message.content)
+
+
+def call_vision_llm(client, image_path: str, instruction: str) -> str:
+    return call_multimodal_llm(
+        client,
+        image_paths=[image_path],
+        instruction=instruction,
+        model=VISION_MODEL,
+        temperature=0.0,
         max_tokens=1500,
     )
-
-    content = response.choices[0].message.content
-    if isinstance(content, list):
-        return "".join(str(item) for item in content).strip()
-    return str(content)

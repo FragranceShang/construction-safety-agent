@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 
+from inspection.image_focus import build_focus_hint, build_focus_image_paths
 from inspection.models import ClauseJudgment, RulePackItem, SceneParseResult
-from inspection.prompt import REFLECTION_PROMPT
+from inspection.prompt import REFLECTION_VLM_PROMPT
 from model.inspection_state import InspectionState
+from utils.inspection_logger import log_node_end, log_node_info, log_node_start
 from utils.json_utils import safe_load_json
-from utils.llm import TEXR_MODEL, call_llm, get_llm
+from utils.llm import VISION_JUDGE_MODEL, call_multimodal_llm, get_llm
 from utils.wandb import log_metrics
 
 
@@ -71,7 +73,7 @@ def _apply_guardrails(
     return updated
 
 
-def _llm_enabled(state: InspectionState) -> bool:
+def _vlm_enabled(state: InspectionState) -> bool:
     if state.get("dry_run"):
         return False
     return bool(os.getenv("OPENROUTER_API_KEY"))
@@ -79,7 +81,12 @@ def _llm_enabled(state: InspectionState) -> bool:
 
 def reflect_judgments_node(state: InspectionState) -> InspectionState:
     scene = SceneParseResult.model_validate(state["scene_parse"])
-    client = get_llm() if _llm_enabled(state) else None
+    client = get_llm() if _vlm_enabled(state) else None
+    log_node_start(
+        "reflect",
+        initial_judgment_count=len(state.get("initial_judgments", [])),
+        vlm_enabled=bool(client),
+    )
 
     final_judgments: list[dict] = []
     for item in state.get("initial_judgments", []):
@@ -119,22 +126,51 @@ def reflect_judgments_node(state: InspectionState) -> InspectionState:
         )
 
         guarded = _apply_guardrails(scene, rule, judgment)
+        if guarded.verdict != judgment.verdict or guarded.reflection_note != judgment.reflection_note:
+            log_node_info(
+                "reflect",
+                "guardrail adjusted judgment",
+                spec_clause=judgment.spec_clause,
+                from_verdict=judgment.verdict,
+                to_verdict=guarded.verdict,
+            )
 
-        # 仅对“强结论”做一次 LLM 反思，避免成本过高
+        # 仅对“强结论”做一次带图复核，避免成本过高
         if client is None or guarded.verdict not in {"compliant", "non_compliant"}:
+            log_node_info(
+                "reflect",
+                "reflection skipped",
+                spec_clause=guarded.spec_clause,
+                reason="no_vlm" if client is None else "non_strong_verdict",
+                verdict=guarded.verdict,
+            )
             final_judgments.append(guarded.model_dump())
             continue
 
-        prompt = REFLECTION_PROMPT.format(
+        focus_hint = build_focus_hint(rule, scene)
+        focus_images = build_focus_image_paths(
+            image_path=state["image_path"],
+            rule=rule,
+            scene=scene,
+        )
+        prompt = REFLECTION_VLM_PROMPT.format(
+            focus_hint=focus_hint,
             scene_json=json.dumps(scene.model_dump(), ensure_ascii=False, indent=2),
             rule_json=json.dumps(candidate or rule.model_dump(), ensure_ascii=False, indent=2),
             judgment_json=json.dumps(guarded.model_dump(), ensure_ascii=False, indent=2),
         )
         try:
-            raw = call_llm(client, prompt, model=TEXR_MODEL, temperature=0.0)
+            raw = call_multimodal_llm(
+                client,
+                image_paths=focus_images,
+                instruction=prompt,
+                model=VISION_JUDGE_MODEL,
+                temperature=0.0,
+                max_tokens=1200,
+            )
             data = safe_load_json(raw, default={})
             if not data:
-                raise ValueError("reflection llm 未返回 JSON")
+                raise ValueError("reflection vlm 未返回 JSON")
 
             revised = guarded.model_dump()
             revised.update(data)
@@ -145,12 +181,32 @@ def reflect_judgments_node(state: InspectionState) -> InspectionState:
             revised.setdefault("disposal_suggestion", guarded.disposal_suggestion)
             revised.setdefault("retrieval_score", guarded.retrieval_score)
             final = ClauseJudgment.model_validate(revised)
+            final = _apply_guardrails(scene, rule, final)
+            log_node_info(
+                "reflect",
+                "vlm reflection completed",
+                spec_clause=guarded.spec_clause,
+                verdict=final.verdict,
+                focus_images=focus_images,
+            )
         except Exception:
             final = guarded
+            log_node_info(
+                "reflect",
+                "vlm reflection failed, keeping guarded judgment",
+                spec_clause=guarded.spec_clause,
+                focus_images=focus_images,
+            )
 
         final_judgments.append(final.model_dump())
 
     state["final_judgments"] = final_judgments
+    verdicts = [item.get("verdict", "") for item in final_judgments]
+    log_node_end(
+        "reflect",
+        final_judgment_count=len(final_judgments),
+        verdicts=verdicts,
+    )
 
     log_metrics(
         {

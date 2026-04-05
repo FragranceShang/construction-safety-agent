@@ -36,7 +36,7 @@ VISION_PARSE_JSON_PROMPT = """
 observation_scope 判定标准：
 - outside_visible：能看到配电箱外部、门体、底部插座、出线等外观特征时为 true
 - inside_visible：只有能清楚看到箱内断路器、汇流排、接线端子、导线色标等内部细节时才为 true
-- door_label_readable：只有当“总配电箱/分配电箱/末级配电箱/名称/编号/系统图/分路标记”等可读时才为 true
+- door_label_readable：只有当“总配电箱/分配电箱/名称/编号/系统图/分路标记”等可读时才为 true
 - parameter_readable：只有当“IP 等级、30mA、0.1s、铭牌参数”等可读时才为 true
 - ledger_available：只有当图片中直接出现检测记录、台账、系统图纸等证据时才为 true
 
@@ -55,9 +55,18 @@ observation_scope 判定标准：
 """
 
 
-RULE_JUDGE_PROMPT = """
-你是施工现场配电箱条款核验代理。
+RULE_JUDGE_VLM_PROMPT = """
+你是施工现场配电箱条款核验代理。你现在会同时看到：
+1) 原始图片
+2) 为当前条款自动裁出的局部放大图
+3) scene_json（只是辅助先验，不是最终证据源）
+4) 候选条款 rule_json
+
+你的首要证据源永远是图片；如果 scene_json 与图片冲突，以图片为准。
 你会在心中按 Observe -> Compare -> Judge 的顺序完成判断，但最终只输出 JSON。
+
+【关注部位提示】
+{focus_hint}
 
 【场景结构化结果】
 {scene_json}
@@ -68,7 +77,7 @@ RULE_JUDGE_PROMPT = """
 【候选条款】
 {rule_json}
 
-请基于上面的场景与条款，输出：
+请输出：
 {{
   "rulepack_id": "",
   "spec_clause": "",
@@ -84,27 +93,33 @@ RULE_JUDGE_PROMPT = """
   "reason": ""
 }}
 
-判定规则：
-1. 只能依据场景 JSON 中已经出现的事实，不得自行补证据。
-2. 只有当“条款适用 + 反向证据清晰可复核”时，才允许给出 non_compliant。
-3. 若条款依赖内部可见、参数可读或台账证据，而当前场景不具备，应优先输出 doubtful，而不是 non_compliant。
-4. 若当前图片与条款场景明显不匹配，则输出 not_applicable，且 applicability=unmatched。
-5. evidence_for / evidence_against 必须是可复核的短句，不得写空洞表述。
-6. reason 控制在 80 字以内，聚焦“为什么这样判”。
+判定原则：
+1. 先看图片，再参考 scene_json。scene_json 只能帮助你定位，不得替代图片本身。
+2. 只能写“图中直接可见、可复核”的证据。不得把推测、常识、应然要求写成已见事实。
+3. 只要当前条款的违规点在图中直接可见，就允许给出 non_compliant；不要因为看不清铭牌/参数，就否定已经清楚可见的外观类违规。
+4. 如果条款依赖“额定值、独立保护电器一一对应、汇流排端子数量、台账、检测记录”等不可见信息，应优先给 doubtful。
+5. 如果图片与条款场景明显不匹配，则 output: verdict=not_applicable, applicability=unmatched。
+6. evidence_for 是支持 compliant 的直接、可复核的证据；evidence_against 是支持 non_compliant 的直接、可复核的证据；missing_evidence 是无法从图片中获得但对判定至关重要的证据。
+7. evidence_for / evidence_against 必须是短句、可复核、可回到图中找到对应部位的描述。
+8. reason 控制在 90 字以内，聚焦“为什么这样判”。
 
-特别注意：
-- 外观条款：可根据箱体外观、插座、出线、门体、环境等做判断
-- 内部条款：只有看清断路器、汇流排、接线色标、端子等时才可能做明确判断
-- 台账条款：单张现场照片通常无法直接下结论
-- 参数条款：若 IP/30mA/0.1s 等不可读，不能强判
+以下情形一旦在图中直接可见，通常可以支持 non_compliant（仅限与条款相关时）：
+- 插座、连接器、电器外壳有明显破损、缺损、缺盖、脱落
+- 箱体存在未封闭开口，或开口处可见导线/端子裸露
+- 进线/出线处无护套、无保护，线缆与尖锐金属边接触
+- 线缆明显下坠受力、被拉拽、未妥善固定
+- 户外设备未见基本防雨/防潮措施且风险部位清晰可见
 
-只输出 JSON。
+只输出 JSON，不要输出 markdown，不要解释。
 """
 
 
-REFLECTION_PROMPT = """
-你是条款判定复核代理，需要对初判结果做“证据充分性反思”。
-你会重点检查：是否过度判定、是否把不可见信息当成了证据、是否把存疑误判成违规。
+REFLECTION_VLM_PROMPT = """
+你是条款判定复核代理。你会再次查看原图与局部图，并对初判进行“证据充分性反思”。
+你的首要证据源仍然是图片；scene_json 和初判都是辅助信息。
+
+【关注部位提示】
+{focus_hint}
 
 【场景结构化结果】
 {scene_json}
@@ -128,12 +143,11 @@ REFLECTION_PROMPT = """
 }}
 
 复核原则：
-1. 若证据不足以支持 non_compliant / compliant，降级为 doubtful。
-2. 若当前图片不具备该条款要求的观察边界（内部/台账/参数），不能维持强结论。
-3. 若条款场景根本不成立，改为 not_applicable。
-4. 只有当反向证据“直接、清晰、可复核”时，才能保留 non_compliant。
+1. 若图中已经存在直接、清晰、可复核的违规证据，不要机械降级为 doubtful。
+2. 若初判把不可见信息当成了证据，必须降级为 doubtful 或 not_applicable。
+3. 若条款需要内部/参数/台账边界，而图片不具备该边界，不能保留强结论。
+4. 若条款场景根本不成立，改为 not_applicable。
 5. reflection_note 用一句话说明是否调整以及原因。
 
 只输出 JSON。
-
 """

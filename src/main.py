@@ -2,6 +2,7 @@ import argparse
 import os
 
 from utils import const
+from utils.inspection_logger import inspection_logger
 from utils.wandb import finish_wandb, init_wandb
 
 
@@ -15,7 +16,7 @@ def parse_args():
     )
     parser.add_argument(
         "--image",
-        default="input/0aeebfb6-4c10-4f2c-bbe9-2a06929c119c.jpg",
+        default="input/before_inspection_492126948059926528_img_1.jpg",  # before_inspection_924308904102498304_img_1.jpg",  # 0aeebfb6-4c10-4f2c-bbe9-2a06929c119c.jpg",
         help="待检测图片路径",
     )
     parser.add_argument(
@@ -44,6 +45,13 @@ def parse_args():
 def run_inspection(args):
     from graph.inspection_graph import build_inspection_graph
 
+    inspection_logger.info(
+        "Launching inspection graph | image=%s, rulepack=%s, dry_run=%s, scene_json=%s",
+        args.image,
+        args.rulepack,
+        bool(args.dry_run),
+        args.scene_json or "<none>",
+    )
     inspection_graph = build_inspection_graph()
     state = {
         "image_path": args.image,
@@ -55,6 +63,12 @@ def run_inspection(args):
         state["scene_parse_path"] = args.scene_json
 
     result = inspection_graph.invoke(state)
+    inspection_logger.info(
+        "Inspection graph completed | final_judgments=%s, report_md=%s, report_json=%s",
+        len(result.get("final_judgments", [])),
+        result.get("report_markdown_path", ""),
+        result.get("report_json_path", ""),
+    )
     print("===施工安全检测结果===")
     print(result["answer"])
     print(f"\nMarkdown 报告：{result['report_markdown_path']}")

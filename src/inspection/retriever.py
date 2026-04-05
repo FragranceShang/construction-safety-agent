@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from difflib import SequenceMatcher
-from typing import Iterable, List
+from typing import Iterable
 
 from .models import RulePackItem, SceneParseResult
 
@@ -36,6 +36,35 @@ _STOPWORDS = {
     "为",
     "其",
 }
+
+_DIRECT_VISUAL_KEYS = (
+    "破损",
+    "完好",
+    "防雨",
+    "防潮",
+    "进线",
+    "出线",
+    "保护措施",
+    "承受外力",
+    "连接器",
+    "插座",
+    "工业用插座",
+    "警示标识",
+)
+
+_HARD_TO_VISUALIZE_KEYS = (
+    "独立的保护电器",
+    "独立保护电器",
+    "额定值",
+    "总电流表",
+    "电压表",
+    "电度表",
+    "汇流排",
+    "端子数量",
+    "系统图",
+    "分路标记",
+    "铭牌参数",
+)
 
 
 def normalize_text(text: str) -> str:
@@ -80,7 +109,6 @@ def extract_trigger_phrases(trigger_name: str) -> list[str]:
         if len(phrase) >= 2 and phrase not in _STOPWORDS:
             phrases.append(phrase)
 
-    # 去重保序
     dedup: list[str] = []
     for item in phrases:
         if item not in dedup:
@@ -135,7 +163,7 @@ def visibility_score(rule: RulePackItem, scene: SceneParseResult) -> float:
     elif visibility == "台账":
         score += 1.8 if scope.ledger_available else -2.0
 
-    feature_text = build_rule_feature_text(rule)
+    feature_text = build_rule_feature_text(rule).lower()
 
     if scope.door_label_readable and any(
         key in feature_text for key in ("名称", "编号", "系统图", "分路标记", "总配电箱", "分配电箱", "末级配电箱")
@@ -155,6 +183,57 @@ def visibility_score(rule: RulePackItem, scene: SceneParseResult) -> float:
     return score
 
 
+def visual_judgability_score(rule: RulePackItem, scene: SceneParseResult, question: str = "") -> float:
+    score = 0.0
+    query_text = "\n".join(
+        [
+            scene.to_search_text(),
+            scene.summary,
+            " ".join(scene.conditions),
+            " ".join(scene.potential_hazards),
+            question,
+        ]
+    )
+    query_compact = compact_text(query_text)
+    clause_text = rule.clause_text
+    feature_text = build_rule_feature_text(rule)
+
+    if any(key in clause_text for key in _DIRECT_VISUAL_KEYS):
+        score += 0.9
+
+    if any(term in query_compact for term in ("破损", "缺损", "缺盖", "脱落", "碎裂", "损坏")):
+        if any(key in clause_text for key in ("完好", "破损", "不合格")):
+            score += 3.2
+
+    if any(term in query_compact for term in ("未封闭开口", "裸露导线", "保护措施", "线缆下垂", "受力", "尖锐断口", "开口可见")):
+        if any(key in clause_text for key in ("进线", "出线", "承受外力", "保护措施", "连接器")):
+            score += 3.0
+
+    if "户外" in query_compact and any(key in clause_text for key in ("防雨", "防潮", "积水")):
+        score += 2.0
+
+    if any(term in question for term in ("可见", "图片内容", "图片中", "visible")):
+        if any(key in feature_text for key in _HARD_TO_VISUALIZE_KEYS):
+            score -= 1.8
+        if any(key in feature_text for key in _DIRECT_VISUAL_KEYS):
+            score += 0.8
+
+    if (not scene.observation_scope.parameter_readable) and any(
+        key in feature_text for key in ("额定值", "电压表", "总电流表", "电度表", "30ma", "0.1s", "铭牌")
+    ):
+        score -= 1.4
+
+    if (not scene.observation_scope.door_label_readable) and any(
+        key in feature_text for key in ("系统图", "分路标记", "编号", "名称")
+    ):
+        score -= 1.2
+
+    if any(key in feature_text for key in ("独立保护电器", "一一对应")) and not scene.observation_scope.parameter_readable:
+        score -= 1.0
+
+    return score
+
+
 def score_rule(rule: RulePackItem, scene: SceneParseResult, question: str = "") -> float:
     query_text = "\n".join([scene.to_search_text(), question]).strip()
     feature_text = build_rule_feature_text(rule)
@@ -164,8 +243,8 @@ def score_rule(rule: RulePackItem, scene: SceneParseResult, question: str = "") 
     semantic = jaccard_score(query_text, feature_text) * 10
     seq = SequenceMatcher(None, compact_text(query_text), compact_text(feature_text)).ratio() * 2.5
     visibility = visibility_score(rule, scene)
+    visual_judgability = visual_judgability_score(rule, scene, question=question)
 
-    # 一些场景特征的额外加权
     bonus = 0.0
     query_compact = compact_text(query_text)
     feature_compact = compact_text(feature_text)
@@ -185,7 +264,7 @@ def score_rule(rule: RulePackItem, scene: SceneParseResult, question: str = "") 
         if left in query_compact and any(right in feature_compact for right in rights):
             bonus += 0.8
 
-    return round(lexical + semantic + seq + visibility + bonus, 4)
+    return round(lexical + semantic + seq + visibility + visual_judgability + bonus, 4)
 
 
 def select_candidate_rules(
@@ -212,7 +291,6 @@ def select_candidate_rules(
     group_scores: list[tuple[str, float]] = []
     for trigger_name, items in trigger_groups.items():
         values = [score for _, score in items]
-        # 用 max + avg*0.2 的方式避免大组天然占优
         group_score = max(values) + (sum(values) / max(len(values), 1)) * 0.2
         group_scores.append((trigger_name, round(group_score, 4)))
     group_scores.sort(key=lambda item: item[1], reverse=True)

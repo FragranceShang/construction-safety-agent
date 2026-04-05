@@ -6,3 +6,5 @@ langchain-huggingface
 wandb
 sentence-transformers
 faiss-cpu
+pydantic
+pillow
