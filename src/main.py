@@ -1,49 +1,92 @@
+import argparse
 import os
-from graph.graph import build_regulation_graph
 
-from memory.manager import Memory
 from utils import const
 from utils.wandb import finish_wandb, init_wandb
 
 
-def main():
+def parse_args():
+    parser = argparse.ArgumentParser(description="Construction Safety Agent")
+    parser.add_argument(
+        "--mode",
+        choices=["inspect", "qa"],
+        default="inspect",
+        help="inspect: 基于 rulepack 的图片施工安全检测；qa: 旧版图片+RAG问答",
+    )
+    parser.add_argument(
+        "--image",
+        default="input/0aeebfb6-4c10-4f2c-bbe9-2a06929c119c.jpg",
+        help="待检测图片路径",
+    )
+    parser.add_argument(
+        "--question",
+        default="请根据图片内容和 rulepack 判断可见的施工安全问题，并给出对应条款结论。",
+        help="问题描述",
+    )
+    parser.add_argument(
+        "--rulepack",
+        default="rulepack.json",
+        help="规则包路径；默认读取根目录 rulepack.json，不存在时自动回退到 *rulepack*.json",
+    )
+    parser.add_argument(
+        "--scene-json",
+        default="",
+        help="离线调试用：直接提供结构化 scene json 文件，跳过视觉模型",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="离线调试用：不调用文本模型，使用保守启发式判定",
+    )
+    return parser.parse_args()
+
+
+def run_inspection(args):
+    from graph.inspection_graph import build_inspection_graph
+
+    inspection_graph = build_inspection_graph()
+    state = {
+        "image_path": args.image,
+        "question": args.question,
+        "rulepack_path": args.rulepack,
+        "dry_run": bool(args.dry_run),
+    }
+    if args.scene_json:
+        state["scene_parse_path"] = args.scene_json
+
+    result = inspection_graph.invoke(state)
+    print("===施工安全检测结果===")
+    print(result["answer"])
+    print(f"\nMarkdown 报告：{result['report_markdown_path']}")
+    print(f"JSON 报告：{result['report_json_path']}")
+
+
+def run_qa(args):
+    from graph.graph import build_regulation_graph
+    from memory.manager import Memory
+
     os.makedirs(os.path.dirname(const.output_path), exist_ok=True)
     client = Memory(4)
-    init_wandb()
-
     regulation_graph = build_regulation_graph(client)
 
     result = regulation_graph.invoke(
         {
-            "question": "这张施工现场图片是否符合规范？",
-            "image_path": "input/before_inspection_924308904102498304_img_1.jpg",
+            "question": args.question,
+            "image_path": args.image,
         }
     )
     print("===生成的回答===")
     print(result["answer"])
 
-    # for question in [
-    #     # "我是华建三局某住宅项目的项目经理。施工现场计划使用一台临时柴油发电机，请问该发电机在安装和使用时必须遵守哪条强制性安全规定？",
-    #     # "由于现场地形限制，那台发电机需要放在一个靠近作业棚的低洼区域。根据规范，这样做允许吗？为什么？",
-    #     # "现在整个项目现场准备采用TN-S接地系统。请问在该系统中，总配电箱和分配电箱的保护导体(PE)应该如何处理？其接地电阻有什么要求？",
-    #     # "项目中有一台塔式起重机，它的电源进线需要重复接地。除了这条规定外，轨道式塔式起重机在接地设置上还有哪些具体要求？",
-    #     # "由于项目在南方雨季施工，现场存在多处积水区域。在这样的潮湿环境下，手持式电动工具的选用有什么特殊规定？能否使用普通I类工具？",
-    #     # "在潮湿区域进行用电设备检修时，应该特别注意哪条强制性规定？为什么这条规定如此重要？",
-    #     # "为了夜间作业，我们采购了一批220V临时照明灯具。工人想用它们作为行灯在脚手架上移动使用，这是否允许？请引用具体条文说明。",
-    #     "现场有一段电缆需要穿过施工道路，我们打算采用直埋方式敷设。根据规范，这段电缆在埋深、防护和标识方面有哪些具体要求？",
-    #     # "回顾之前提到的发电机、塔吊接地、潮湿环境工具使用等场景，请问在这些不同情况下，规范中对‘保护导体(PE)’的处理有哪些共通的安全原则？至少列举两点。",
-    #     # '''假设这样一个复合场景：
-    #     # 在雨季潮湿的华建三局项目现场，一台塔式起重机正在高压架空线路附近作业，夜间施工需要使用照明，同时现场有一台发电机作为备用电源。
-    #     # 请你作为安全顾问，基于规范全文和前面所有问题的信息，制定一份综合性的安全措施清单，必须涵盖：
-    #     #     1.防电击接地措施（针对TN-S系统、塔吊、发电机）
-    #     #     2.潮湿环境电气设备使用要求
-    #     #     3.临近高压线作业的安全防护
-    #     #     4.夜间照明安全要求
-    #     #     5.至少三条相关强制性条文的执行要点'''
-    # ]:
-    #     result = regulation_graph.invoke(RegulationState(question=question))
-    #     print("===生成的回答===")
-    #     print(result["answer"])
+
+def main():
+    args = parse_args()
+    init_wandb()
+
+    if args.mode == "inspect":
+        run_inspection(args)
+    else:
+        run_qa(args)
 
     finish_wandb()
 

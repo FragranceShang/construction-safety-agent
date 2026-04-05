@@ -1,5 +1,6 @@
 from utils.llm import call_llm, get_llm, TEXR_MODEL
 from memory.prompt import KNOWLEDGE_PROMPT, PROFILE_PROMPT
+from utils.json_utils import safe_load_json
 
 
 class Memory:
@@ -41,7 +42,7 @@ class Memory:
         print("===update_profile===")
         print(raw)
 
-        profile_dict = _safe_load_json(raw)
+        profile_dict = safe_load_json(raw, default={}) or {}
         for key, value in profile_dict.items():
             self.user_profile[key] = value
 
@@ -58,26 +59,8 @@ class Memory:
         print("===update_knowledge===")
         print(raw)
 
-        knowledge_dict = _safe_load_json(raw)
-        for item in knowledge_dict["common_query_patterns"]:
+        knowledge_dict = safe_load_json(raw, default={"common_query_patterns": []}) or {
+            "common_query_patterns": []
+        }
+        for item in knowledge_dict.get("common_query_patterns", []):
             self.knowledge_graph[tuple(item.get("extracted_keywords", []))] = item
-
-
-def _safe_load_json(text: str):
-    """
-    从 LLM 输出中安全提取 JSON（支持 markdown + 解释文本）
-    """
-    import json
-    import re
-
-    text = re.sub(r"```json|```", "", text).strip()
-    match = re.search(r"\{[\s\S]*\}", text)
-    if not match:
-        return None
-
-    json_str = match.group()
-    try:
-        return json.loads(json_str)
-    except json.JSONDecodeError:
-        print(f"JSON 解析错误: {json_str}")
-        return None
