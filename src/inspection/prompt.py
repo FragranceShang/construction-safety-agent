@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+import json
+
+
 VISION_PARSE_JSON_PROMPT = """
 你是施工现场临时用电安全检查助手，需要从图片中抽取“可直接支持 rulepack 判定”的事实。
 请只输出 JSON，不要输出 markdown，不要解释。
@@ -150,4 +155,305 @@ REFLECTION_VLM_PROMPT = """
 5. reflection_note 用一句话说明是否调整以及原因。
 
 只输出 JSON。
+"""
+
+
+FOLLOWUP_ACTION_CATALOG = {
+    "OCR": {
+        "keywords": [
+            "ip",
+            "防尘",
+            "防水",
+            "漏保",
+            "电流",
+            "时间",
+            "铭牌",
+            "参数",
+            "标识",
+            "警示",
+            "标牌",
+            "字样",
+            "标明",
+            "名称",
+            "编号",
+            "记录",
+            "台账",
+            "证书",
+            "日期",
+            "文字",
+            "读取",
+            "字",
+        ],
+        "desc_template": "请寻找并提取画面中相关的文字、数字、型号或警示语内容。",
+        "expect": "需清晰输出文字/数字内容",
+    },
+    "VISUAL_DETAIL": {
+        "keywords": [
+            "接线",
+            "端子",
+            "排",
+            "线",
+            "压接",
+            "破损",
+            "绝缘",
+            "隔板",
+            "护板",
+            "铜排",
+            "接触",
+            "固定",
+            "材质",
+            "颜色",
+            "锈蚀",
+            "熔体",
+            "电缆",
+            "裸露",
+            "局部",
+            "特写",
+            "细节",
+            "放大",
+            "内部",
+            "仔细",
+        ],
+        "desc_template": "请对该部位的内部细节、连接状态、材质颜色或破损情况进行特写检查。",
+        "expect": "需清晰展示局部细节及物理状态",
+    },
+    "GEOMETRY": {
+        "keywords": [
+            "高度",
+            "距离",
+            "尺寸",
+            "离地",
+            "间距",
+            "空间",
+            "狭窄",
+            "通道",
+            "间隙",
+            "厚度",
+            "位置",
+            "远近",
+            "长度",
+        ],
+        "desc_template": "请评估物体之间的相对位置、高度或距离。如果可能，寻找参照物进行判断。",
+        "expect": "需展示空间相对位置或预估距离",
+    },
+    "VISUAL_CHECK": {
+        "keywords": [
+            "门",
+            "锁",
+            "防雨",
+            "遮挡",
+            "外壳",
+            "安装",
+            "环境",
+            "固定",
+            "完整",
+            "变形",
+            "设置",
+            "放置",
+            "配置",
+            "具备",
+            "外观",
+            "整体",
+            "宏观",
+        ],
+        "desc_template": "请检查该设备的整体外观、物理状态（如开启/关闭/损坏）及周围环境。",
+        "expect": "需明确物体的整体存在性与宏观状态",
+    },
+}
+
+ACTION_CATALOG_JSON = json.dumps(FOLLOWUP_ACTION_CATALOG, ensure_ascii=False, indent=2)
+
+
+RULE_RECALL_VLM_PROMPT = """
+你是施工安全条款召回代理。你会看到一张施工现场图片，以及一个已经由文本召回得到的候选条款池。
+请你只做“视觉相关性 triage”，不要做最终合规判断。
+
+【用户问题】
+{question}
+
+【scene_json】
+{scene_json}
+
+【已固定保留的 symbolic top5】
+{symbolic_ids}
+
+【候选池（最多 12~15 条）】
+{candidate_cards_json}
+
+请仅从候选池中再选择最多 3 条“从图片上最值得继续核验”的条款，优先考虑：
+1. 与图中直接可见风险相关；
+2. 通过继续看图或局部放大仍有机会补证；
+3. 不与已固定保留的 symbolic top5 重复。
+
+请只输出 JSON：
+{{
+  "selected_rulepack_ids": ["...", "..."],
+  "reasons": {{
+    "rulepack_id": "为什么它和图中部位更相关"
+  }}
+}}
+"""
+
+
+FOLLOWUP_PLAN_PROMPT = """
+你是施工安全核验 agent 的 planner。当前首轮条款判断为 doubtful，需要决定：
+- 这条存疑是否值得在“同一张图片”上继续补证；
+- 如果值得，应该用哪种动作：OCR / VISUAL_DETAIL / GEOMETRY / VISUAL_CHECK；
+- 如果不值得，也要明确属于 needs_new_view / needs_document / not_worth_retry。
+
+【scene_json】
+{scene_json}
+
+【当前条款】
+{rule_json}
+
+【首轮判定】
+{judgment_json}
+
+【动作目录】
+{action_catalog_json}
+
+输出 JSON：
+{{
+  "need_followup": true,
+  "observability": "same_image_recoverable | needs_new_view | needs_document | not_worth_retry",
+  "reason": "",
+  "actions": [
+    {{
+      "action_type": "OCR | VISUAL_DETAIL | GEOMETRY | VISUAL_CHECK",
+      "target": "",
+      "why": "",
+      "expected": "",
+      "roi_request": "",
+      "stop_if": "",
+      "priority": 1
+    }}
+  ]
+}}
+
+规划原则：
+1. 只有当同一张图通过局部放大、读字、检查局部细节仍有机会补证时，才使用 same_image_recoverable。
+2. 条款若主要依赖台账、检测记录、配电系统图、参数铭牌不可见等信息，应使用 needs_document 或 needs_new_view。
+3. 尽量每条条款最多规划 1~2 个动作，不要泛化成一长串动作。
+4. OCR 适用于参数/标识/警示语；VISUAL_DETAIL 适用于破损、接线、裸露、材质、内部局部；GEOMETRY 适用于高度/间距/距离；VISUAL_CHECK 适用于整体外观、门锁、防雨、安装环境。
+5. 请优先规划“最可能改变 verdict 的动作”。
+
+只输出 JSON。
+"""
+
+
+ROI_PROPOSAL_PROMPT = """
+你是图像局部取景代理。请不要做条款最终判定，只决定应该裁哪一块局部。
+
+【scene_json】
+{scene_json}
+
+【条款】
+{rule_json}
+
+【当前判定】
+{judgment_json}
+
+【后续动作】
+{action_json}
+
+请在原图上给出 1~2 个最值得裁剪的区域，坐标使用 0~1 的相对比例。
+输出 JSON：
+{{
+  "regions": [
+    {{
+      "name": "",
+      "x1": 0.10,
+      "y1": 0.20,
+      "x2": 0.80,
+      "y2": 0.95,
+      "reason": ""
+    }}
+  ]
+}}
+
+要求：
+1. 只给和当前动作最相关的局部。
+2. 框必须是有效矩形，且面积不要过小。
+3. 如果无法精确定位，也给一个尽量可靠的较大局部，不要返回空。
+4. 你只能决定怎么裁图，不能直接给结论。
+"""
+
+
+ACTION_EXECUTION_PROMPT = """
+你是施工安全核验 agent 的执行器。你现在执行一个 follow-up action。
+你会看到原图以及局部裁剪图；你的任务不是判断整条条款合规，而是产出这次动作的观察结果。
+
+【scene_json】
+{scene_json}
+
+【条款】
+{rule_json}
+
+【动作】
+{action_json}
+
+【动作说明】
+{action_instruction}
+
+请只输出 JSON：
+{{
+  "action_id": "",
+  "rulepack_id": "",
+  "spec_clause": "",
+  "action_type": "",
+  "status": "completed | no_gain | failed",
+  "observations": [],
+  "extracted_texts": [],
+  "usable_evidence": [],
+  "unresolved": [],
+  "summary": ""
+}}
+
+执行原则：
+1. observations 写这次动作实际看到了什么。
+2. extracted_texts 只在 OCR 或读字成功时填写。
+3. usable_evidence 只保留可能影响后续 verdict 的短句证据。
+4. 如果这次动作没有带来新信息，使用 status=no_gain。
+5. 不要直接输出 compliant / non_compliant；这里只记录观察结果。
+"""
+
+
+REJUDGE_PROMPT = """
+你是施工安全核验 agent 的 rejudge 节点。你会重新查看原图、局部图、首轮判定以及 follow-up observation。
+现在要做的是：基于新增证据重新给出这条条款的 verdict。
+
+【scene_json】
+{scene_json}
+
+【条款】
+{rule_json}
+
+【首轮判定】
+{judgment_json}
+
+【follow-up observations】
+{observations_json}
+
+请只输出 JSON：
+{{
+  "rulepack_id": "",
+  "spec_clause": "",
+  "spec_name": "",
+  "clause_text": "",
+  "visibility_tag": "",
+  "trigger_name": "",
+  "applicability": "matched | uncertain | unmatched",
+  "verdict": "compliant | non_compliant | doubtful | not_applicable",
+  "evidence_for": [],
+  "evidence_against": [],
+  "missing_evidence": [],
+  "reason": ""
+}}
+
+要求：
+1. 若新增 observation 已经带来了直接、清晰、可复核的风险证据，应允许从 doubtful 升级为 non_compliant。
+2. 若新增 observation 仍不足以改变结论，则保持 doubtful，并明确缺什么。
+3. 不能把 observation 中没有出现的内容当作证据。
+4. 当前节点是“重判”，不是总结流程。
 """

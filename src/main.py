@@ -16,7 +16,7 @@ def parse_args():
     )
     parser.add_argument(
         "--image",
-        default="input/before_inspection_492126948059926528_img_1.jpg",  # before_inspection_924308904102498304_img_1.jpg",  # 0aeebfb6-4c10-4f2c-bbe9-2a06929c119c.jpg",
+        default="input/before_inspection_924308904102498304_img_1.jpg",  # before_inspection_924308904102498304_img_1.jpg",  # 0aeebfb6-4c10-4f2c-bbe9-2a06929c119c.jpg",
         help="待检测图片路径",
     )
     parser.add_argument(

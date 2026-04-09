@@ -29,8 +29,8 @@ def init_wandb(config=None):
 
     try:
         run = wandb.init(
-            project="agent-memory",
-            name="rag_memory_memory",
+            project="agent-design",
+            name="agent-design",
             mode=mode,
             config=config
             or {

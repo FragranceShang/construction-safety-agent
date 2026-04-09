@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 from difflib import SequenceMatcher
 from typing import Iterable
+
+from inspection.prompt import RULE_RECALL_VLM_PROMPT
+from utils.json_utils import safe_load_json
+from utils.llm import VISION_JUDGE_MODEL, call_multimodal_llm
 
 from .models import RulePackItem, SceneParseResult
 
@@ -317,3 +322,153 @@ def select_candidate_rules(
 
     selected.sort(key=lambda item: item.get("retrieval_score", 0.0), reverse=True)
     return selected[: max(top_k_rules, len(selected))]
+
+
+def build_candidate_card(rule: RulePackItem, score: float) -> dict:
+    return {
+        "rulepack_id": rule.rulepack_id,
+        "spec_clause": rule.spec_clause,
+        "visibility_tag": rule.primary_visibility,
+        "trigger_name": rule.primary_trigger_name,
+        "judge_dimension": rule.judge_dimension,
+        "clause_text": rule.clause_text[:160],
+        "retrieval_score": score,
+    }
+
+
+def _fallback_vlm_picks(
+    pool: list[tuple[RulePackItem, float]],
+    symbolic_ids: set[str],
+    top_k_vlm: int,
+) -> list[dict]:
+    picks: list[dict] = []
+    seen_triggers: set[str] = set()
+    for rule, score in pool:
+        if rule.rulepack_id in symbolic_ids:
+            continue
+        trigger_key = rule.primary_trigger_name
+        if trigger_key in seen_triggers and len(picks) < top_k_vlm:
+            continue
+        seen_triggers.add(trigger_key)
+        payload = rule.model_dump()
+        payload["retrieval_score"] = score
+        payload["selected_by"] = "fallback_vlm"
+        picks.append(payload)
+        if len(picks) >= top_k_vlm:
+            break
+    return picks
+
+
+def _vlm_select_candidate_rules(
+    *,
+    client,
+    image_path: str,
+    scene: SceneParseResult,
+    question: str,
+    symbolic_candidates: list[dict],
+    scored_pool: list[tuple[RulePackItem, float]],
+    top_k_vlm: int,
+) -> list[dict]:
+    if client is None or not image_path:
+        return _fallback_vlm_picks(scored_pool, {item["rulepack_id"] for item in symbolic_candidates}, top_k_vlm)
+
+    candidate_cards = [build_candidate_card(rule, score) for rule, score in scored_pool]
+    prompt = RULE_RECALL_VLM_PROMPT.format(
+        question=question or "请根据图片内容判断可见的施工安全问题。",
+        scene_json=json.dumps(scene.model_dump(), ensure_ascii=False, indent=2),
+        symbolic_ids=json.dumps([item["rulepack_id"] for item in symbolic_candidates], ensure_ascii=False),
+        candidate_cards_json=json.dumps(candidate_cards, ensure_ascii=False, indent=2),
+    )
+    try:
+        raw = call_multimodal_llm(
+            client,
+            image_paths=[image_path],
+            instruction=prompt,
+            model=VISION_JUDGE_MODEL,
+            temperature=0.0,
+            max_tokens=1200,
+        )
+        data = safe_load_json(raw, default={}) or {}
+        selected_ids = [item for item in data.get("selected_rulepack_ids", []) if isinstance(item, str)]
+        if not selected_ids:
+            raise ValueError("VLM rule recall 未选出条款")
+        score_map = {rule.rulepack_id: (rule, score) for rule, score in scored_pool}
+        symbolic_ids = {item["rulepack_id"] for item in symbolic_candidates}
+        result: list[dict] = []
+        for rulepack_id in selected_ids:
+            if rulepack_id in symbolic_ids or rulepack_id not in score_map:
+                continue
+            rule, score = score_map[rulepack_id]
+            payload = rule.model_dump()
+            payload["retrieval_score"] = score
+            payload["selected_by"] = "vlm"
+            payload["vlm_reason"] = str((data.get("reasons") or {}).get(rulepack_id, ""))
+            result.append(payload)
+            if len(result) >= top_k_vlm:
+                break
+        if result:
+            return result
+    except Exception:
+        pass
+
+    return _fallback_vlm_picks(scored_pool, {item["rulepack_id"] for item in symbolic_candidates}, top_k_vlm)
+
+
+def select_candidate_rules_hybrid(
+    *,
+    rules: Iterable[RulePackItem],
+    scene: SceneParseResult,
+    question: str = "",
+    image_path: str = "",
+    client=None,
+    top_k_symbolic: int = 5,
+    top_k_vlm: int = 3,
+    vlm_pool_k: int = 12,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    all_rules = list(rules)
+    symbolic_candidates = select_candidate_rules(
+        rules=all_rules,
+        scene=scene,
+        question=question,
+        top_k_rules=max(top_k_symbolic, 5),
+        top_k_triggers=3,
+    )[:top_k_symbolic]
+
+    scored_pool: list[tuple[RulePackItem, float]] = [
+        (rule, score_rule(rule, scene, question=question)) for rule in all_rules
+    ]
+    scored_pool.sort(key=lambda item: item[1], reverse=True)
+    vlm_pool = scored_pool[: max(vlm_pool_k, top_k_symbolic + top_k_vlm)]
+
+    vlm_candidates = _vlm_select_candidate_rules(
+        client=client,
+        image_path=image_path,
+        scene=scene,
+        question=question,
+        symbolic_candidates=symbolic_candidates,
+        scored_pool=vlm_pool,
+        top_k_vlm=top_k_vlm,
+    )
+
+    selected: list[dict] = []
+    selected_ids: set[str] = set()
+    for payload in symbolic_candidates + vlm_candidates:
+        if payload["rulepack_id"] in selected_ids:
+            continue
+        selected.append(payload)
+        selected_ids.add(payload["rulepack_id"])
+
+    final_target = top_k_symbolic + top_k_vlm
+    for rule, score in scored_pool:
+        if len(selected) >= final_target:
+            break
+        if rule.rulepack_id in selected_ids:
+            continue
+        payload = rule.model_dump()
+        payload["retrieval_score"] = score
+        payload["selected_by"] = "fallback_fill"
+        selected.append(payload)
+        selected_ids.add(rule.rulepack_id)
+
+    selected.sort(key=lambda item: item.get("retrieval_score", 0.0), reverse=True)
+    return symbolic_candidates, vlm_candidates, selected[:final_target]

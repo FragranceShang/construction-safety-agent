@@ -1,12 +1,20 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 
 Verdict = Literal["compliant", "non_compliant", "doubtful", "not_applicable"]
 Applicability = Literal["matched", "uncertain", "unmatched"]
+ActionType = Literal["OCR", "VISUAL_DETAIL", "GEOMETRY", "VISUAL_CHECK"]
+Observability = Literal[
+    "same_image_recoverable",
+    "needs_new_view",
+    "needs_document",
+    "not_worth_retry",
+]
+ActionStatus = Literal["planned", "completed", "skipped", "failed", "no_gain"]
 
 
 class Trigger(BaseModel):
@@ -113,6 +121,46 @@ class ClauseJudgment(BaseModel):
     reflection_note: str = ""
 
 
+class FollowupActionPlan(BaseModel):
+    action_id: str
+    rulepack_id: str
+    spec_clause: str
+    action_type: ActionType
+    observability: Observability = "same_image_recoverable"
+    target: str = ""
+    why: str = ""
+    expected: str = ""
+    roi_request: str = ""
+    stop_if: str = ""
+    priority: int = 1
+
+
+class RoiRegion(BaseModel):
+    name: str
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    reason: str = ""
+
+
+class ActionObservation(BaseModel):
+    action_id: str
+    rulepack_id: str
+    spec_clause: str
+    action_type: ActionType
+    observability: Observability
+    status: ActionStatus = "completed"
+    target: str = ""
+    roi_regions: List[RoiRegion] = Field(default_factory=list)
+    image_paths: List[str] = Field(default_factory=list)
+    observations: List[str] = Field(default_factory=list)
+    extracted_texts: List[str] = Field(default_factory=list)
+    usable_evidence: List[str] = Field(default_factory=list)
+    unresolved: List[str] = Field(default_factory=list)
+    summary: str = ""
+
+
 class InspectionSummary(BaseModel):
     total_candidates: int = 0
     non_compliant: int = 0
@@ -129,3 +177,8 @@ class InspectionReport(BaseModel):
     summary: InspectionSummary
     judgments: List[ClauseJudgment] = Field(default_factory=list)
     final_conclusion: str = ""
+
+    symbolic_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    vlm_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    followup_plan: List[FollowupActionPlan] = Field(default_factory=list)
+    action_observations: List[ActionObservation] = Field(default_factory=list)

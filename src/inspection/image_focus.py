@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
+from typing import Iterable
 
 from PIL import Image
 
-from .models import RulePackItem, SceneParseResult
+from inspection.prompt import ROI_PROPOSAL_PROMPT
+from utils.json_utils import safe_load_json
+from utils.llm import VISION_JUDGE_MODEL, call_multimodal_llm
+
+from .models import ClauseJudgment, FollowupActionPlan, RoiRegion, RulePackItem, SceneParseResult
 
 
 _SOCKET_KEYS = (
@@ -81,7 +87,7 @@ def build_focus_hint(rule: RulePackItem, scene: SceneParseResult) -> str:
     return " ".join(hints)
 
 
-def _crop_specs(rule: RulePackItem, scene: SceneParseResult) -> list[tuple[str, tuple[float, float, float, float]]]:
+def _crop_specs(rule: RulePackItem, scene: SceneParseResult, action_type: str | None = None) -> list[tuple[str, tuple[float, float, float, float]]]:
     text = _normalize(
         " ".join(
             [
@@ -92,12 +98,18 @@ def _crop_specs(rule: RulePackItem, scene: SceneParseResult) -> list[tuple[str, 
                 scene.summary,
                 " ".join(scene.visible_objects),
                 " ".join(scene.potential_hazards),
+                action_type or "",
             ]
         )
     )
 
     specs: list[tuple[str, tuple[float, float, float, float]]] = []
-    if any(key.lower() in text for key in _SOCKET_KEYS):
+    if action_type == "OCR":
+        specs.append(("center", (0.10, 0.08, 0.90, 0.90)))
+        specs.append(("top_center", (0.06, 0.00, 0.94, 0.65)))
+    elif action_type == "GEOMETRY":
+        specs.append(("full", (0.0, 0.0, 1.0, 1.0)))
+    elif any(key.lower() in text for key in _SOCKET_KEYS):
         specs.append(("bottom", (0.0, 0.38, 1.0, 1.0)))
         specs.append(("bottom_center", (0.18, 0.34, 0.82, 0.96)))
     elif any(key.lower() in text for key in _INTERNAL_KEYS):
@@ -108,8 +120,134 @@ def _crop_specs(rule: RulePackItem, scene: SceneParseResult) -> list[tuple[str, 
     else:
         specs.append(("center", (0.10, 0.08, 0.90, 0.90)))
 
-    # 最多保留两个局部视图，控制成本
     return specs[:2]
+
+
+def _sanitize_region(region: RoiRegion) -> RoiRegion:
+    x1 = max(0.0, min(0.98, region.x1))
+    y1 = max(0.0, min(0.98, region.y1))
+    x2 = max(x1 + 0.05, min(1.0, region.x2))
+    y2 = max(y1 + 0.05, min(1.0, region.y2))
+    return RoiRegion(
+        name=region.name or "roi",
+        x1=round(x1, 4),
+        y1=round(y1, 4),
+        x2=round(x2, 4),
+        y2=round(y2, 4),
+        reason=region.reason,
+    )
+
+
+def heuristic_roi_regions(
+    image_path: str,
+    rule: RulePackItem,
+    scene: SceneParseResult,
+    action_type: str | None = None,
+) -> list[RoiRegion]:
+    del image_path
+    specs = _crop_specs(rule, scene, action_type=action_type)
+    return [
+        RoiRegion(name=name, x1=box[0], y1=box[1], x2=box[2], y2=box[3], reason="heuristic_fallback")
+        for name, box in specs
+    ]
+
+
+def propose_roi_regions(
+    *,
+    client,
+    image_path: str,
+    rule: RulePackItem,
+    scene: SceneParseResult,
+    judgment: ClauseJudgment | None = None,
+    action_plan: FollowupActionPlan | None = None,
+) -> list[RoiRegion]:
+    if client is None:
+        return heuristic_roi_regions(image_path, rule, scene, action_type=action_plan.action_type if action_plan else None)
+
+    prompt = ROI_PROPOSAL_PROMPT.format(
+        scene_json=json.dumps(scene.model_dump(), ensure_ascii=False, indent=2),
+        rule_json=json.dumps(rule.model_dump(), ensure_ascii=False, indent=2),
+        judgment_json=json.dumps(judgment.model_dump(), ensure_ascii=False, indent=2) if judgment else "{}",
+        action_json=json.dumps(action_plan.model_dump(), ensure_ascii=False, indent=2) if action_plan else "{}",
+    )
+    try:
+        raw = call_multimodal_llm(
+            client,
+            image_paths=[image_path],
+            instruction=prompt,
+            model=VISION_JUDGE_MODEL,
+            temperature=0.0,
+            max_tokens=900,
+        )
+        data = safe_load_json(raw, default={}) or {}
+        regions_raw = data.get("regions") or []
+        regions: list[RoiRegion] = []
+        for item in regions_raw:
+            try:
+                region = _sanitize_region(RoiRegion.model_validate(item))
+                regions.append(region)
+            except Exception:
+                continue
+        if regions:
+            return regions[:2]
+    except Exception:
+        pass
+    return heuristic_roi_regions(image_path, rule, scene, action_type=action_plan.action_type if action_plan else None)
+
+
+def crop_image_regions(
+    image_path: str,
+    regions: Iterable[RoiRegion],
+    output_dir: str,
+    prefix: str,
+) -> list[str]:
+    origin = Path(image_path)
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    image_paths: list[str] = [str(origin)]
+    with Image.open(origin) as img:
+        rgb = img.convert("RGB")
+        width, height = rgb.size
+        for idx, region in enumerate(regions, start=1):
+            x1 = max(0, min(width - 1, int(width * region.x1)))
+            y1 = max(0, min(height - 1, int(height * region.y1)))
+            x2 = max(x1 + 1, min(width, int(width * region.x2)))
+            y2 = max(y1 + 1, min(height, int(height * region.y2)))
+            crop = rgb.crop((x1, y1, x2, y2))
+            output_path = out_dir / f"{prefix}_roi_{idx}.jpg"
+            crop.save(output_path, format="JPEG", quality=92)
+            image_paths.append(str(output_path))
+
+    return image_paths
+
+
+def build_action_image_paths(
+    *,
+    image_path: str,
+    rule: RulePackItem,
+    scene: SceneParseResult,
+    action_plan: FollowupActionPlan,
+    client=None,
+    judgment: ClauseJudgment | None = None,
+    output_dir: str = "outputs/followup_focus",
+) -> tuple[list[str], list[RoiRegion]]:
+    regions = propose_roi_regions(
+        client=client,
+        image_path=image_path,
+        rule=rule,
+        scene=scene,
+        judgment=judgment,
+        action_plan=action_plan,
+    )
+    prefix = f"{Path(image_path).stem}_{rule.spec_clause.replace('.', '_')}_{action_plan.action_id}"
+    image_paths = crop_image_regions(
+        image_path=image_path,
+        regions=regions,
+        output_dir=output_dir,
+        prefix=prefix,
+    )
+    return image_paths, regions
 
 
 def build_focus_image_paths(
@@ -119,27 +257,14 @@ def build_focus_image_paths(
     output_dir: str = "outputs/focus_images",
 ) -> list[str]:
     """
+    兼容首轮 judge / reflect 的旧接口。
     返回 [原图, 裁剪图1, 裁剪图2...]。
-    裁剪图由条款与场景自动生成，供 VLM 在逐条核验时聚焦细节。
     """
-    origin = Path(image_path)
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    result = [str(origin)]
-    specs = _crop_specs(rule, scene)
-
-    with Image.open(origin) as img:
-        rgb = img.convert("RGB")
-        width, height = rgb.size
-        for name, (x1r, y1r, x2r, y2r) in specs:
-            x1 = max(0, min(width - 1, int(width * x1r)))
-            y1 = max(0, min(height - 1, int(height * y1r)))
-            x2 = max(x1 + 1, min(width, int(width * x2r)))
-            y2 = max(y1 + 1, min(height, int(height * y2r)))
-            crop = rgb.crop((x1, y1, x2, y2))
-            output_path = out_dir / f"{origin.stem}_{rule.spec_clause.replace('.', '_')}_{name}.jpg"
-            crop.save(output_path, format="JPEG", quality=92)
-            result.append(str(output_path))
-
-    return result
+    regions = heuristic_roi_regions(image_path, rule, scene)
+    prefix = f"{Path(image_path).stem}_{rule.spec_clause.replace('.', '_')}"
+    return crop_image_regions(
+        image_path=image_path,
+        regions=regions,
+        output_dir=output_dir,
+        prefix=prefix,
+    )
