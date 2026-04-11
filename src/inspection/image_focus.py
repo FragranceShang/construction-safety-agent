@@ -205,19 +205,28 @@ def crop_image_regions(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    image_paths: list[str] = [str(origin)]
+    region_list = list(regions)
+    crop_paths = [
+        out_dir / f"{prefix}_roi_{idx}.jpg"
+        for idx, _ in enumerate(region_list, start=1)
+    ]
+    image_paths: list[str] = [str(origin), *[str(path) for path in crop_paths]]
+    origin_mtime = origin.stat().st_mtime
+    if crop_paths and all(
+        path.exists() and path.stat().st_mtime >= origin_mtime for path in crop_paths
+    ):
+        return image_paths
+
     with Image.open(origin) as img:
         rgb = img.convert("RGB")
         width, height = rgb.size
-        for idx, region in enumerate(regions, start=1):
+        for region, output_path in zip(region_list, crop_paths):
             x1 = max(0, min(width - 1, int(width * region.x1)))
             y1 = max(0, min(height - 1, int(height * region.y1)))
             x2 = max(x1 + 1, min(width, int(width * region.x2)))
             y2 = max(y1 + 1, min(height, int(height * region.y2)))
             crop = rgb.crop((x1, y1, x2, y2))
-            output_path = out_dir / f"{prefix}_roi_{idx}.jpg"
             crop.save(output_path, format="JPEG", quality=92)
-            image_paths.append(str(output_path))
 
     return image_paths
 

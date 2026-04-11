@@ -31,7 +31,11 @@ VERDICT_ORDER = {
 def sort_judgments(judgments: Iterable[ClauseJudgment]) -> list[ClauseJudgment]:
     return sorted(
         judgments,
-        key=lambda item: (VERDICT_ORDER.get(item.verdict, 9), -item.retrieval_score, item.spec_clause),
+        key=lambda item: (
+            VERDICT_ORDER.get(item.verdict, 9),
+            -item.retrieval_score,
+            item.spec_clause,
+        ),
     )
 
 
@@ -46,8 +50,13 @@ def build_summary(judgments: list[ClauseJudgment]) -> InspectionSummary:
     )
 
 
-def build_final_conclusion(summary: InspectionSummary, action_observations: list[ActionObservation] | None = None) -> str:
-    executed = sum(1 for item in (action_observations or []) if item.status == "completed")
+def build_final_conclusion(
+    summary: InspectionSummary,
+    action_observations: list[ActionObservation] | None = None,
+) -> str:
+    executed = sum(
+        1 for item in (action_observations or []) if item.status == "completed"
+    )
     if summary.non_compliant > 0:
         suffix = f" 二轮补证执行 {executed} 次。" if executed else ""
         return (
@@ -80,7 +89,9 @@ def build_report_payload(
     sorted_items = sort_judgments(judgments)
     summary = build_summary(sorted_items)
     action_observations = action_observations or []
-    conclusion = build_final_conclusion(summary, action_observations=action_observations)
+    conclusion = build_final_conclusion(
+        summary, action_observations=action_observations
+    )
     return InspectionReport(
         image_path=image_path,
         rulepack_path=rulepack_path,
@@ -89,6 +100,15 @@ def build_report_payload(
         summary=summary,
         judgments=sorted_items,
         final_conclusion=conclusion,
+        final_verdict=(
+            "non_compliant"
+            if summary.non_compliant > 0
+            else (
+                "doubtful"
+                if summary.doubtful > 0
+                else "compliant" if summary.compliant > 0 else "not_applicable"
+            )
+        ),
         symbolic_candidates=symbolic_candidates or [],
         vlm_candidates=vlm_candidates or [],
         followup_plan=followup_plan or [],
@@ -101,7 +121,9 @@ def _render_items(title: str, items: list[ClauseJudgment]) -> list[str]:
         return [f"## {title}", "无。", ""]
     lines = [f"## {title}", ""]
     for idx, item in enumerate(items, start=1):
-        lines.append(f"{idx}. 【{item.spec_clause}】{VERDICT_LABEL.get(item.verdict, item.verdict)}")
+        lines.append(
+            f"{idx}. 【{item.spec_clause}】{VERDICT_LABEL.get(item.verdict, item.verdict)}"
+        )
         lines.append(f"   - 条款：{item.clause_text}")
         if item.evidence_for:
             lines.append(f"   - 支持证据：{'；'.join(item.evidence_for)}")
@@ -174,7 +196,7 @@ def build_markdown_report(report: InspectionReport) -> str:
         f"- 规则包：`{report.rulepack_path}`",
         f"- 问题：{report.question or '请按规则包判断图片中的施工安全问题'}",
         "",
-        "## 总结论",
+        f"## 总结论：{report.final_verdict}",
         report.final_conclusion,
         "",
         "## 场景解析摘要",
@@ -198,14 +220,18 @@ def build_markdown_report(report: InspectionReport) -> str:
         "",
     ]
 
-    lines.extend(_render_candidates("召回条款（symbolic top5）", report.symbolic_candidates))
+    lines.extend(
+        _render_candidates("召回条款（symbolic top5）", report.symbolic_candidates)
+    )
     lines.extend(_render_candidates("召回条款（vlm extra）", report.vlm_candidates))
     lines.extend(_render_followup(report))
 
     violations = [item for item in report.judgments if item.verdict == "non_compliant"]
     doubtfuls = [item for item in report.judgments if item.verdict == "doubtful"]
     compliants = [item for item in report.judgments if item.verdict == "compliant"]
-    not_applicable = [item for item in report.judgments if item.verdict == "not_applicable"]
+    not_applicable = [
+        item for item in report.judgments if item.verdict == "not_applicable"
+    ]
 
     lines.extend(_render_items("疑似违规条款", violations))
     lines.extend(_render_items("存疑条款", doubtfuls))

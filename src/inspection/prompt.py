@@ -105,8 +105,8 @@ RULE_JUDGE_VLM_PROMPT = """
 4. 如果条款依赖“额定值、独立保护电器一一对应、汇流排端子数量、台账、检测记录”等不可见信息，应优先给 doubtful。
 5. 如果图片与条款场景明显不匹配，则 output: verdict=not_applicable, applicability=unmatched。
 6. evidence_for 是支持 compliant 的直接、可复核的证据；evidence_against 是支持 non_compliant 的直接、可复核的证据；missing_evidence 是无法从图片中获得但对判定至关重要的证据。
-7. evidence_for / evidence_against 必须是短句、可复核、可回到图中找到对应部位的描述。
-8. reason 控制在 90 字以内，聚焦“为什么这样判”。
+7. evidence_for / evidence_against 必须是短句、可复核、可回到图中找到对应部位的描述，控制在 200 字以内。
+8. reason 控制在 300 字以内，聚焦“为什么这样判”。
 
 以下情形一旦在图中直接可见，通常可以支持 non_compliant（仅限与条款相关时）：
 - 插座、连接器、电器外壳有明显破损、缺损、缺盖、脱落

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from inspection.models import (
@@ -15,6 +14,22 @@ from utils import const
 from utils.inspection_logger import inspection_logger
 from utils.json_utils import dump_json
 from utils.wandb import log_metrics
+
+
+def _report_paths_for_image(image_path: str) -> tuple[Path, Path]:
+    image = Path(image_path)
+    input_root = Path("input")
+
+    try:
+        if image.is_absolute():
+            relative_image = image.resolve().relative_to(input_root.resolve())
+        else:
+            relative_image = image.relative_to(input_root)
+    except ValueError:
+        relative_image = Path(image.name)
+
+    output_base = Path(const.output_dir) / relative_image.parent / relative_image.stem
+    return output_base.with_suffix(".md"), output_base.with_suffix(".json")
 
 
 def generate_report_node(state: InspectionState) -> InspectionState:
@@ -47,13 +62,14 @@ def generate_report_node(state: InspectionState) -> InspectionState:
         action_observations=action_observations,
     )
 
-    os.makedirs(const.output_dir, exist_ok=True)
-    state["report_markdown_path"] = const.inspection_report_md
-    state["report_json_path"] = const.inspection_report_json
+    markdown_path, json_path = _report_paths_for_image(state["image_path"])
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    state["report_markdown_path"] = str(markdown_path)
+    state["report_json_path"] = str(json_path)
 
     markdown = build_markdown_report(report)
-    Path(const.inspection_report_md).write_text(markdown, encoding="utf-8")
-    dump_json(report.model_dump(), const.inspection_report_json, indent=2)
+    markdown_path.write_text(markdown, encoding="utf-8")
+    dump_json(report.model_dump(), str(json_path), indent=2)
 
     state["answer"] = markdown
     rejudged = state.get("rejudge_judgments", [])

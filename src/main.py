@@ -1,9 +1,17 @@
 import argparse
 import os
+from pathlib import Path
+from types import SimpleNamespace
 
 from utils import const
 from utils.inspection_logger import inspection_logger
+from utils.json_utils import dump_json
 from utils.wandb import finish_wandb, init_wandb
+
+
+DEFAULT_QUESTION = (
+    "请根据图片内容和 rulepack 判断可见的施工安全问题，并给出对应条款结论。"
+)
 
 
 def parse_args():
@@ -21,7 +29,7 @@ def parse_args():
     )
     parser.add_argument(
         "--question",
-        default="请根据图片内容和 rulepack 判断可见的施工安全问题，并给出对应条款结论。",
+        default=DEFAULT_QUESTION,
         help="问题描述",
     )
     parser.add_argument(
@@ -42,7 +50,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def run_inspection(args):
+def run_inspection(args, *, print_report: bool = True):
     from graph.inspection_graph import build_inspection_graph
 
     inspection_logger.info(
@@ -69,10 +77,92 @@ def run_inspection(args):
         result.get("report_markdown_path", ""),
         result.get("report_json_path", ""),
     )
-    print("===施工安全检测结果===")
-    print(result["answer"])
-    print(f"\nMarkdown 报告：{result['report_markdown_path']}")
-    print(f"JSON 报告：{result['report_json_path']}")
+    if print_report:
+        print("===施工安全检测结果===")
+        print(result["answer"])
+        print(f"\nMarkdown 报告：{result['report_markdown_path']}")
+        print(f"JSON 报告：{result['report_json_path']}")
+    return result
+
+
+def _collect_batch_images(
+    image_paths: list[str] | None,
+    image_dir: str | None,
+    glob_pattern: str,
+) -> list[str]:
+    if image_paths:
+        return [str(path) for path in image_paths]
+    if not image_dir:
+        raise ValueError("run_batch_inspection 需要 image_paths 或 image_dir")
+
+    root = Path(image_dir)
+    if not root.exists():
+        raise FileNotFoundError(f"批量图片目录不存在：{image_dir}")
+    if not root.is_dir():
+        raise NotADirectoryError(f"批量图片路径不是目录：{image_dir}")
+    return [str(path) for path in sorted(root.rglob(glob_pattern)) if path.is_file()]
+
+
+def run_batch_inspection(
+    image_paths: list[str] | None = None,
+    *,
+    image_dir: str | None = None,
+    glob_pattern: str = "*.jpg",
+    question: list[str],
+    rulepack: str = "rulepack.json",
+    scene_json: str = "",
+    dry_run: bool = False,
+    print_report: bool = False,
+    summary_path: str | None = None,
+) -> list[dict]:
+    """
+    批量运行 inspect graph，供测评脚本直接 import 调用。
+
+    可传入 image_paths；也可传入 image_dir + glob_pattern 递归收集图片。
+    返回每张图片对应的 inspection graph result。
+    """
+    init_wandb()
+
+    images = _collect_batch_images(image_paths, image_dir, glob_pattern)
+    inspection_logger.info("Launching batch inspection | total=%d", len(images))
+
+    results: list[dict] = []
+    summaries: list[dict] = []
+    for i, image in enumerate(images):
+        args = SimpleNamespace(
+            image=image,
+            question=question[i],
+            rulepack=rulepack,
+            scene_json=scene_json,
+            dry_run=dry_run,
+        )
+        result = run_inspection(args, print_report=print_report)
+        results.append(result)
+        summaries.append(
+            {
+                "image_path": image,
+                "report_markdown_path": result.get("report_markdown_path", ""),
+                "report_json_path": result.get("report_json_path", ""),
+                "final_judgments": len(result.get("final_judgments", [])),
+                "violations": sum(
+                    1
+                    for item in result.get("final_judgments", [])
+                    if item.get("verdict") == "non_compliant"
+                ),
+                "doubtful": sum(
+                    1
+                    for item in result.get("final_judgments", [])
+                    if item.get("verdict") == "doubtful"
+                ),
+            }
+        )
+
+    if summary_path:
+        Path(summary_path).parent.mkdir(parents=True, exist_ok=True)
+        dump_json(summaries, summary_path, indent=2)
+
+    finish_wandb()
+    return results
 
 
 def run_qa(args):

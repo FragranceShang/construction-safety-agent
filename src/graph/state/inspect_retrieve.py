@@ -36,7 +36,7 @@ def retrieve_candidate_rules_node(state: InspectionState) -> InspectionState:
         question=state.get("question", ""),
         image_path=state.get("image_path", ""),
         client=client,
-        top_k_symbolic=5,
+        retrieval_score_threshold=6.0,
         top_k_vlm=3,
         vlm_pool_k=12,
     )

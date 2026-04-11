@@ -421,54 +421,44 @@ def select_candidate_rules_hybrid(
     question: str = "",
     image_path: str = "",
     client=None,
-    top_k_symbolic: int = 5,
+    retrieval_score_threshold: float = 6.0,
     top_k_vlm: int = 3,
     vlm_pool_k: int = 12,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     all_rules = list(rules)
-    symbolic_candidates = select_candidate_rules(
-        rules=all_rules,
-        scene=scene,
-        question=question,
-        top_k_rules=max(top_k_symbolic, 5),
-        top_k_triggers=3,
-    )[:top_k_symbolic]
-
     scored_pool: list[tuple[RulePackItem, float]] = [
         (rule, score_rule(rule, scene, question=question)) for rule in all_rules
     ]
     scored_pool.sort(key=lambda item: item[1], reverse=True)
-    vlm_pool = scored_pool[: max(vlm_pool_k, top_k_symbolic + top_k_vlm)]
+    vlm_pool = scored_pool[: max(vlm_pool_k, top_k_vlm)]
 
     vlm_candidates = _vlm_select_candidate_rules(
         client=client,
         image_path=image_path,
         scene=scene,
         question=question,
-        symbolic_candidates=symbolic_candidates,
+        symbolic_candidates=[],
         scored_pool=vlm_pool,
         top_k_vlm=top_k_vlm,
     )
 
+    vlm_ids = {item["rulepack_id"] for item in vlm_candidates}
+    symbolic_candidates: list[dict] = []
+    for rule, score in scored_pool:
+        if rule.rulepack_id in vlm_ids or score <= retrieval_score_threshold:
+            continue
+        payload = rule.model_dump()
+        payload["retrieval_score"] = score
+        payload["selected_by"] = "retrieval_threshold"
+        symbolic_candidates.append(payload)
+
     selected: list[dict] = []
     selected_ids: set[str] = set()
-    for payload in symbolic_candidates + vlm_candidates:
+    for payload in vlm_candidates + symbolic_candidates:
         if payload["rulepack_id"] in selected_ids:
             continue
         selected.append(payload)
         selected_ids.add(payload["rulepack_id"])
 
-    final_target = top_k_symbolic + top_k_vlm
-    for rule, score in scored_pool:
-        if len(selected) >= final_target:
-            break
-        if rule.rulepack_id in selected_ids:
-            continue
-        payload = rule.model_dump()
-        payload["retrieval_score"] = score
-        payload["selected_by"] = "fallback_fill"
-        selected.append(payload)
-        selected_ids.add(rule.rulepack_id)
-
     selected.sort(key=lambda item: item.get("retrieval_score", 0.0), reverse=True)
-    return symbolic_candidates, vlm_candidates, selected[:final_target]
+    return symbolic_candidates, vlm_candidates, selected

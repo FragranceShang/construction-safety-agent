@@ -177,6 +177,7 @@ class InspectionReport(BaseModel):
     summary: InspectionSummary
     judgments: List[ClauseJudgment] = Field(default_factory=list)
     final_conclusion: str = ""
+    final_verdict: Optional[Verdict] = None
 
     symbolic_candidates: List[Dict[str, Any]] = Field(default_factory=list)
     vlm_candidates: List[Dict[str, Any]] = Field(default_factory=list)
