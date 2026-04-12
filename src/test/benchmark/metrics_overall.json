@@ -1,0 +1,13 @@
+{
+  "sample_count": 143,
+  "group_count": 9,
+  "rulepack_count": 10,
+  "rule_detection_precision": 0.39037433155080214,
+  "rule_detection_recall": 0.9647577092511013,
+  "rule_detection_f1": 0.5558375634517767,
+  "verdict_accuracy": 0.91324200913242,
+  "verdict_weighted_f1": 0.9417626138620707,
+  "non_compliant_recall": 0.9116279069767442,
+  "final_result_accuracy": 0.7972027972027972,
+  "final_violation_recall_strict": 0.849624060150376
+}
